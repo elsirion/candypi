@@ -4,3 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+st7735-lcd = { version = "0.10", features = ["graphics"] }
+rppal = { version = "0.19", features = ["embedded-hal"] }
+qrcode = "0.14"
+embedded-graphics = "0.8"
