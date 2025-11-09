@@ -26,27 +26,59 @@ const LCD_RST_PIN: u8 = 25;
 const DISPLAY_WIDTH: u32 = 128;
 const DISPLAY_HEIGHT: u32 = 160;
 
+const STATUS_BAR_HEIGHT: u32 = 13;
+
 type Display = ST7735<SimpleHalSpiDevice<Spi>, OutputPin, OutputPin>;
+
+#[derive(Clone)]
+enum ConnectionStatus {
+    Connected,
+    Disconnected,
+}
+
+struct StatusBar {
+    height: u32,
+    ip_address: String,
+    connection_status: ConnectionStatus,
+}
+
+impl StatusBar {
+    fn new(ip_address: String) -> Self {
+        Self {
+            height: STATUS_BAR_HEIGHT,
+            ip_address,
+            connection_status: ConnectionStatus::Disconnected,
+        }
+    }
+    
+    fn update_ip(&mut self, ip: String) {
+        self.ip_address = ip;
+    }
+    
+    fn set_connection_status(&mut self, status: ConnectionStatus) {
+        self.connection_status = status;
+    }
+}
 
 struct DisplayLayout {
     qr_size: u32,
     qr_y_offset: u32,
     amount_y: u32,
-    ip_y: u32,
+    status_bar_height: u32,
 }
 
 impl DisplayLayout {
     fn new() -> Self {
+        let status_bar_height = STATUS_BAR_HEIGHT;
         let qr_size = DISPLAY_WIDTH - 4; // Leave 2px margin on each side
-        let qr_y_offset = 4; // Small margin from top
+        let qr_y_offset = status_bar_height + 4; // Start after status bar + small margin
         let amount_y = qr_y_offset + qr_size + 8; // 8px below QR
-        let ip_y = amount_y + 16; // 16px below amount
         
         Self {
             qr_size,
             qr_y_offset,
             amount_y,
-            ip_y,
+            status_bar_height,
         }
     }
 }
@@ -71,6 +103,38 @@ fn clear_display(display: &mut Display) {
             .fill_color(Rgb565::BLACK)
             .build());
     let _ = bg.draw(display);
+}
+
+fn draw_status_bar(display: &mut Display, status_bar: &StatusBar) {
+    // Black background for status bar
+    let status_bg = Rectangle::new(Point::new(0, 0), Size::new(DISPLAY_WIDTH, STATUS_BAR_HEIGHT))
+        .into_styled(PrimitiveStyleBuilder::new()
+            .fill_color(Rgb565::BLACK)
+            .build());
+    let _ = status_bg.draw(display);
+    
+    let text_style = MonoTextStyle::new(&FONT_6X10, Rgb565::WHITE);
+    
+    // Connection status indicator (left side)
+    let status_text = match status_bar.connection_status {
+        ConnectionStatus::Connected => "*",
+        ConnectionStatus::Disconnected => "o",
+    };
+    let status_display = Text::new(
+        status_text,
+        Point::new(2, STATUS_BAR_HEIGHT as i32 - 3),
+        text_style,
+    );
+    let _ = status_display.draw(display);
+    
+    // IP address (right side)
+    let ip_x = DISPLAY_WIDTH as i32 - (status_bar.ip_address.len() as i32 * 6) - 2;
+    let ip_display = Text::new(
+        &status_bar.ip_address,
+        Point::new(ip_x, STATUS_BAR_HEIGHT as i32 - 3),
+        text_style,
+    );
+    let _ = ip_display.draw(display);
 }
 
 fn generate_qr_image(data: &str, target_size: u32) -> Result<(Vec<u8>, u32), Box<dyn std::error::Error>> {
@@ -105,7 +169,7 @@ fn generate_qr_image(data: &str, target_size: u32) -> Result<(Vec<u8>, u32), Box
     Ok((qr_data, actual_size))
 }
 
-fn display_invoice_screen(display: &mut Display, invoice_data: &str, amount: &str) -> Result<(), Box<dyn std::error::Error>> {
+fn display_invoice_screen(display: &mut Display, invoice_data: &str, amount: &str, status_bar: &StatusBar) -> Result<(), Box<dyn std::error::Error>> {
     println!("Generating invoice display for: {}", invoice_data);
     
     let layout = DisplayLayout::new();
@@ -116,6 +180,9 @@ fn display_invoice_screen(display: &mut Display, invoice_data: &str, amount: &st
             .fill_color(Rgb565::WHITE)
             .build());
     let _ = bg.draw(display);
+    
+    // Draw status bar
+    draw_status_bar(display, status_bar);
     
     // Generate QR code image
     let (qr_data, actual_qr_size) = generate_qr_image(invoice_data, layout.qr_size)?;
@@ -139,19 +206,59 @@ fn display_invoice_screen(display: &mut Display, invoice_data: &str, amount: &st
     );
     let _ = amount_text.draw(display);
     
-    // Display IP address
-    let ip = get_local_ip();
-    let ip_text = Text::new(
-        &ip,
-        Point::new(
-            ((DISPLAY_WIDTH - (ip.len() as u32 * 6)) / 2) as i32, // Center text
-            layout.ip_y as i32
-        ),
+    println!("Invoice screen displayed!");
+    Ok(())
+}
+
+fn display_payment_success_screen(display: &mut Display, status_bar: &StatusBar) -> Result<(), Box<dyn std::error::Error>> {
+    println!("Displaying payment success/dispensing screen");
+    
+    // Clear screen with green background to indicate success
+    let bg = Rectangle::new(Point::new(0, 0), Size::new(DISPLAY_WIDTH, DISPLAY_HEIGHT))
+        .into_styled(PrimitiveStyleBuilder::new()
+            .fill_color(Rgb565::new(0, 31, 0)) // Green background
+            .build());
+    let _ = bg.draw(display);
+    
+    // Draw status bar
+    draw_status_bar(display, status_bar);
+    
+    let text_style = MonoTextStyle::new(&FONT_6X10, Rgb565::WHITE);
+    
+    // "Payment Received" message
+    let payment_text = "Payment Received!";
+    let payment_x = ((DISPLAY_WIDTH - (payment_text.len() as u32 * 6)) / 2) as i32;
+    let payment_y = STATUS_BAR_HEIGHT as i32 + 30;
+    let payment_display = Text::new(
+        payment_text,
+        Point::new(payment_x, payment_y),
         text_style,
     );
-    let _ = ip_text.draw(display);
+    let _ = payment_display.draw(display);
     
-    println!("Invoice screen displayed!");
+    // "Dispensing..." message
+    let dispensing_text = "Dispensing...";
+    let dispensing_x = ((DISPLAY_WIDTH - (dispensing_text.len() as u32 * 6)) / 2) as i32;
+    let dispensing_y = payment_y + 20;
+    let dispensing_display = Text::new(
+        dispensing_text,
+        Point::new(dispensing_x, dispensing_y),
+        text_style,
+    );
+    let _ = dispensing_display.draw(display);
+    
+    // Simple progress indicator using dots
+    let progress_text = ". . . . .";
+    let progress_x = ((DISPLAY_WIDTH - (progress_text.len() as u32 * 6)) / 2) as i32;
+    let progress_y = dispensing_y + 25;
+    let progress_display = Text::new(
+        progress_text,
+        Point::new(progress_x, progress_y),
+        text_style,
+    );
+    let _ = progress_display.draw(display);
+    
+    println!("Payment success screen displayed!");
     Ok(())
 }
 
@@ -203,9 +310,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut motor_pin = gpio.get(MOTOR_PIN)?.into_output();
     motor_pin.set_low();
     
+    // Initialize status bar
+    let ip = get_local_ip();
+    let mut status_bar = StatusBar::new(ip);
+    status_bar.set_connection_status(ConnectionStatus::Disconnected);
+    
     // Display initial invoice screen
     let initial_invoice = generate_invoice_string();
-    display_invoice_screen(&mut display, &initial_invoice, "42 sats")?;
+    display_invoice_screen(&mut display, &initial_invoice, "42 sats", &status_bar)?;
     
     println!("Press Enter to dispense candy (Ctrl+C to exit)...");
     
@@ -215,16 +327,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     loop {
         match lines.next() {
             Some(Ok(_)) => {
+                // Show payment success and dispensing screen
+                display_payment_success_screen(&mut display, &status_bar)?;
+                
                 match dispense_candy(&mut motor_pin) {
                     Ok(_) => {
+                        // Keep success screen visible for 3 seconds after dispensing
+                        thread::sleep(Duration::from_secs(3));
+                        
                         // Generate and display new invoice screen for next purchase
                         let new_invoice = generate_invoice_string();
-                        display_invoice_screen(&mut display, &new_invoice, "42 sats")?;
+                        display_invoice_screen(&mut display, &new_invoice, "42 sats", &status_bar)?;
                         
                         println!("Ready for next dispense. Press Enter to dispense again...");
                     }
                     Err(e) => {
                         eprintln!("Error during dispensing: {}", e);
+                        // On error, go back to invoice screen
+                        let new_invoice = generate_invoice_string();
+                        display_invoice_screen(&mut display, &new_invoice, "42 sats", &status_bar)?;
                     }
                 }
             }
