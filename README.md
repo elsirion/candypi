@@ -24,14 +24,34 @@ A Rust application for a Raspberry Pi Zero 2 W that displays QR codes on an ST77
 - Clean shutdown on Ctrl+C
 
 ## Building
+
+### Option 1: Cross-compile with Nix (Recommended)
 ```bash
-cargo build --release
+# Build statically-linked ARM64 binary for Raspberry Pi
+nix build .#candypi-arm64
+
+# The binary will be at: result/bin/candypi
+# It's fully standalone - no dependencies needed on the Pi
 ```
 
-## Running
+### Option 2: Build natively on Raspberry Pi
 ```bash
+cargo build --release
 sudo ./target/release/candypi
 ```
+
+## Deployment to Raspberry Pi
+
+After building with Nix:
+```bash
+# Copy the standalone binary to your Pi
+scp result/bin/candypi pi@your-pi-address:/home/pi/
+
+# SSH into your Pi and run it
+ssh pi@your-pi-address
+sudo ./candypi
+```
+
 Note: Requires sudo for GPIO access on Raspberry Pi.
 
 ## Configuration
