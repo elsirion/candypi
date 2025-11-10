@@ -4,65 +4,56 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     rust-overlay.url = "github:oxalica/rust-overlay";
+    crane.url = "github:ipetkov/crane";
     flake-utils.url = "github:numtide/flake-utils";
   };
 
-  outputs = { self, nixpkgs, rust-overlay, flake-utils, ... }:
-    flake-utils.lib.eachDefaultSystem (system:
+  outputs = { self, nixpkgs, rust-overlay, crane, flake-utils, ... }:
+    flake-utils.lib.eachSystem [ "x86_64-linux" "aarch64-linux" ] (system:
       let
         overlays = [ (import rust-overlay) ];
         pkgs = import nixpkgs {
           inherit system overlays;
         };
         
-        # Use pkgsCross for proper cross-compilation
-        pkgsCross = pkgs.pkgsCross.aarch64-multiplatform-musl;
-        
         rustToolchain = pkgs.rust-bin.stable.latest.default.override {
-          extensions = [ "rust-src" ];
-          targets = [ "aarch64-unknown-linux-musl" ];
+          extensions = [ "rust-src" "rust-analyzer" ];
         };
         
-        # Create custom rust platform for cross-compilation
-        rustPlatform = pkgsCross.makeRustPlatform {
-          cargo = rustToolchain;
-          rustc = rustToolchain;
-        };
+        craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
         
-        # Build the cross-compiled binary using buildRustPackage
-        candypi = rustPlatform.buildRustPackage rec {
-          pname = "candypi";
-          version = "0.1.0";
-          
-          src = ./.;
-          
-          cargoLock = {
-            lockFile = ./Cargo.lock;
-          };
-          
-          nativeBuildInputs = [ rustToolchain ];
-          
-          # Configure cross-compilation
-          CARGO_BUILD_TARGET = "aarch64-unknown-linux-musl";
-          
-          # Use static linking
-          RUSTFLAGS = "-C target-feature=+crt-static";
-          
-          # Skip tests for cross-compilation
+        commonArgs = {
+          src = craneLib.cleanCargoSource ./.;
+          strictDeps = true;
           doCheck = false;
           
-          postInstall = ''
-            # Strip the binary to reduce size
-            ${pkgsCross.stdenv.cc.targetPrefix}strip $out/bin/candypi || true
-          '';
+          # Let rocksdb crate build its own RocksDB for compatibility
+          
+          nativeBuildInputs = with pkgs; [
+            rustToolchain
+            cmake
+            pkg-config
+            perl
+            clang
+            llvmPackages.libclang
+            llvmPackages.libcxxClang
+          ];
+          
+          LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
         };
         
+        cargoArtifacts = craneLib.buildDepsOnly (commonArgs // {
+          buildPhaseCargoCommand = "cargo build --release --locked";
+          doCheck = false;
+          checkPhase = "";
+        });
+        
+        candypi = craneLib.buildPackage (commonArgs // {
+          inherit cargoArtifacts;
+        });
       in
       {
-        packages = {
-          default = candypi;
-          candypi-arm64 = candypi;
-        };
+        packages.default = candypi;
         
         devShells.default = pkgs.mkShell {
           buildInputs = with pkgs; [
@@ -74,17 +65,15 @@
           shellHook = ''
             echo "CandyPi development environment"
             echo ""
-            echo "To build for ARM64 (Raspberry Pi):"
-            echo "  nix build .#candypi-arm64"
+            echo "Available commands:"
+            echo "  nix build                  - Build for current platform"
+            echo "  nix bundle                - Create portable binary"
             echo ""
-            echo "The resulting binary will be in: result/bin/candypi"
+            echo "To build for Raspberry Pi on x86_64:"
+            echo "  nix build --system aarch64-linux"
+            echo "  nix bundle --system aarch64-linux"
             echo ""
-            echo "To deploy to your Raspberry Pi:"
-            echo "  scp result/bin/candypi pi@your-pi-address:/home/pi/"
-            echo "  ssh pi@your-pi-address"
-            echo "  sudo ./candypi"
-            echo ""
-            echo "Note: The binary is statically linked and standalone."
+            echo "Bundled binaries include all dependencies and work on any Linux system."
           '';
         };
       });
