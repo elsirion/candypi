@@ -1,5 +1,7 @@
 # CandyPi - Lightning-Paid Candy Dispenser
 
+<img align="right" width="300" src="candy_dispenser_smol.jpg" alt="CandyPi Dispenser">
+
 A Rust application for a Raspberry Pi Zero 2 W that displays QR codes on an ST7735 LCD display and controls a motor for dispensing candy.
 
 ## Hardware Setup
